@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>求职面试助手</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">X</div>
+        <div>
+          <h1>求职面试助手</h1>
+          <p>求职与面试工作台</p>
+        </div>
+      </div>
+
+      <button id="newConversationBtn" class="primary-btn full-width">新建对话</button>
+
+      <section class="sidebar-section">
+        <div class="section-head">
+          <h2>对话列表</h2>
+          <span id="conversationCount" class="badge">0</span>
+        </div>
+        <div id="conversationList" class="conversation-list"></div>
+      </section>
+
+      <section class="sidebar-section status-card">
+        <h2>运行状态</h2>
+        <p>默认入口已切到 API，当前页面直接对接 `/api/*` 接口。</p>
+        <p id="healthStatus" class="status-line">检测中...</p>
+      </section>
+    </aside>
+
+    <main class="workspace">
+      <header class="workspace-header">
+        <div>
+          <p class="eyebrow">独立前端接入</p>
+          <h2>求职辅助工作台</h2>
+        </div>
+        <div class="header-actions">
+          <button class="ghost-btn tab-btn active" data-tab="chat">聊天</button>
+          <button class="ghost-btn tab-btn" data-tab="profile">画像</button>
+          <button class="ghost-btn tab-btn" data-tab="analysis">用户分析</button>
+          <button class="ghost-btn tab-btn" data-tab="interview">面试题</button>
+        </div>
+      </header>
+
+      <section id="chatPanel" class="panel active">
+        <div class="panel-grid chat-grid">
+          <div class="card chat-card">
+            <div class="card-head chat-head">
+              <h3>对话区</h3>
+              <span id="currentConversationTitle" class="muted">未选择对话</span>
+              <button id="scrollToLatestBtn" type="button" class="ghost-btn compact-btn">回到底部</button>
+            </div>
+            <div id="chatMessages" class="chat-messages"></div>
+          </div>
+
+          <div class="stack chat-side">
+            <div class="card">
+              <div class="card-head">
+                <h3>发送消息</h3>
+              </div>
+              <label class="field">
+                <span>模型</span>
+                <select id="chatModel">
+                  <option value="Pro/MiniMaxAI/MiniMax-M2.5">Pro/MiniMaxAI/MiniMax-M2.5</option>
+                  <option value="deepseek-ai/DeepSeek-R1">deepseek-ai/DeepSeek-R1</option>
+                  <option value="Qwen/Qwen3.5-397B-A17B">Qwen/Qwen3.5-397B-A17B</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>提示词模板</span>
+                <select id="chatPromptTemplate">
+                  <option value="default">default</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>消息内容</span>
+                <textarea id="chatInput" rows="6" placeholder="输入你的求职、画像或职业问题..."></textarea>
+              </label>
+              <button id="sendMessageBtn" class="primary-btn">发送</button>
+            </div>
+
+            <div class="card">
+              <div class="card-head">
+                <h3>思考过程</h3>
+              </div>
+              <pre id="chatThinking" class="thinking-box">尚无内容</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="profilePanel" class="panel">
+        <div class="panel-grid">
+          <div class="card">
+            <div class="card-head">
+              <h3>结构化画像编辑</h3>
+            </div>
+            <label class="field"><span>专业</span><input id="profileMajor" type="text"></label>
+            <label class="field"><span>学历</span><input id="profileDegree" type="text"></label>
+            <label class="field"><span>毕业年份</span><input id="profileGraduationYear" type="text"></label>
+            <label class="field"><span>经验水平</span><input id="profileExperienceLevel" type="text"></label>
+            <label class="field"><span>目标城市</span><input id="profileTargetCities" type="text"
+                placeholder="用逗号分隔"></label>
+            <label class="field"><span>技术栈</span><input id="profileTechStack" type="text" placeholder="用逗号分隔"></label>
+            <label class="field"><span>岗位偏好</span><input id="profileJobPreferences" type="text"
+                placeholder="用逗号分隔"></label>
+            <label class="field"><span>关注点</span><input id="profileConcerns" type="text" placeholder="用逗号分隔"></label>
+            <div class="button-row">
+              <button id="saveStructuredProfileBtn" class="primary-btn">保存结构化画像</button>
+              <button id="reloadProfileBtn" class="ghost-btn">重新加载</button>
+            </div>
+          </div>
+
+          <div class="stack">
+            <div class="card">
+              <div class="card-head">
+                <h3>原始 YAML 编辑</h3>
+              </div>
+              <label class="field">
+                <span>画像文件内容</span>
+                <textarea id="profileFileContent" rows="18" placeholder="这里显示 user_profile.yaml 内容"></textarea>
+              </label>
+              <div class="button-row">
+                <button id="loadProfileFileBtn" class="ghost-btn">读取文件</button>
+                <button id="saveProfileFileBtn" class="primary-btn">保存文件</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head">
+                <h3>画像摘要</h3>
+              </div>
+              <pre id="profileSummary" class="thinking-box">尚无内容</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="analysisPanel" class="panel">
+        <div class="panel-grid">
+          <div class="card">
+            <div class="card-head">
+              <h3>用户建立分析</h3>
+            </div>
+            <label class="field"><span>目标岗位</span><input id="analysisTargetPosition" type="text"
+                placeholder="例如：嵌入式工程师"></label>
+            <label class="field"><span>目标城市</span><input id="analysisTargetCity" type="text"
+                placeholder="例如：深圳"></label>
+            <label class="field"><span>目标方向</span><input id="analysisTargetDirection" type="text"
+                placeholder="例如：嵌入式 / FPGA / 芯片验证"></label>
+            <label class="field"><span>补充说明</span><textarea id="analysisNotes" rows="6"
+                placeholder="例如：希望优先校招，接受硬件测试岗位"></textarea></label>
+            <label class="field">
+              <span>上传简历 (PDF)</span>
+              <div style="display: flex; gap: 8px;">
+                <input id="analysisResumeFile" type="file" accept=".pdf">
+                <button id="uploadResumeBtn" class="ghost-btn">解析简历</button>
+              </div>
+            </label>
+            <label class="field">
+              <span>简历解析结果</span>
+              <textarea id="analysisResumeContent" rows="8"
+                placeholder="PDF 简历解析出的 Markdown 将显示在这里，你可以进行检查和编辑..."></textarea>
+            </label>
+            <label class="field">
+              <span>模型选型</span>
+              <select id="analysisModel">
+                <option value="Pro/MiniMaxAI/MiniMax-M2.5">Pro/MiniMaxAI/MiniMax-M2.5</option>
+                <option value="deepseek-ai/DeepSeek-R1">deepseek-ai/DeepSeek-R1</option>
+                <option value="Qwen/Qwen3.5-397B-A17B" selected>Qwen/Qwen3.5-397B-A17B</option>
+              </select>
+            </label>
+            <button id="runAnalysisBtn" class="primary-btn">生成分析报告</button>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <h3>分析结果</h3>
+            </div>
+            <div id="analysisResult" class="result-grid empty-state">尚未生成分析报告</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="interviewPanel" class="panel">
+        <div class="panel-grid">
+          <div class="card">
+            <div class="card-head">
+              <h3>面试题生成</h3>
+            </div>
+            <label class="field"><span>目标岗位</span><input id="interviewTargetPosition" type="text"
+                placeholder="例如：嵌入式工程师"></label>
+            <label class="field"><span>难度</span><input id="interviewDifficulty" type="text" value="中等"></label>
+            <label class="field"><span>题量</span><input id="interviewQuestionCount" type="number" value="5" min="1"
+                max="20"></label>
+            <label class="field"><span>题型</span><input id="interviewQuestionTypes" type="text"
+                placeholder="例如：项目深挖,八股,场景题"></label>
+            <label class="field"><span>补充说明</span><textarea id="interviewNotes" rows="6"
+                placeholder="例如：优先问项目深挖和通信总线基础"></textarea></label>
+            <label class="field">
+              <span>模型选型</span>
+              <select id="interviewModel">
+                <option value="Pro/MiniMaxAI/MiniMax-M2.5">Pro/MiniMaxAI/MiniMax-M2.5</option>
+                <option value="deepseek-ai/DeepSeek-R1">deepseek-ai/DeepSeek-R1</option>
+                <option value="Qwen/Qwen3.5-397B-A17B" selected>Qwen/Qwen3.5-397B-A17B</option>
+              </select>
+            </label>
+            <button id="generateInterviewBtn" class="primary-btn">生成面试题</button>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <h3>题目结果</h3>
+            </div>
+            <div id="interviewResult" class="question-list empty-state">尚未生成题目</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <script src="/assets/app.js"></script>
+</body>
+
+</html>
