@@ -26,23 +26,23 @@ graph TD
     User([用户操作界面]) --> |输入对话/问题| API(FastAPI 服务端)
     User --> |上传 PDF 简历| API
     
-    subgraph 简历解析模块
-    API --> |解析简历流| PDFParser[PyMuPDF 文本提取]
-    PDFParser --> |Markdown 内容| ProfileService[提取用户画像与内容备份]
+    subgraph "简历解析模块"
+        API --> |解析简历流| PDFParser[PyMuPDF 文本提取]
+        PDFParser --> |Markdown 内容| ProfileService[提取用户画像与内容备份]
     end
     
-    subgraph 意图调度与处理 (Multi-Route Dispatcher)
-    API --> |接收 Query| IntentRouter{意图判别服务}
-    
-    IntentRouter --> |RAG 需求| SubRAG[本地混合检索引擎]
-    IntentRouter --> |外部工具调用| SubMCP[请求分发至 MCP 服务集群]
-    IntentRouter --> |通用类提问| SubGeneral[标准 LLM 回复]
+    subgraph "意图调度与处理 (Multi-Route Dispatcher)"
+        API --> |接收 Query| IntentRouter{意图判别服务}
+        
+        IntentRouter --> |RAG 需求| SubRAG[本地混合检索引擎]
+        IntentRouter --> |外部工具调用| SubMCP[请求分发至 MCP 服务集群]
+        IntentRouter --> |通用类提问| SubGeneral[标准 LLM 回复]
     end
     
-    subgraph 本地检索增强模块 (RAG)
-    SubRAG --> |1. 生成 Sparse/Dense Embeddings| EmbedModel(BGE-M3 模型引擎)
-    EmbedModel --> |2. 加载检索| MilvusDB[(Milvus 混合向量数据库)]
-    MilvusDB --> |3. 返回事实知识点| ContextFilter[召回信息重组与过滤]
+    subgraph "本地检索增强模块 (RAG)"
+        SubRAG --> |1. 生成 Embeddings| EmbedModel(BGE-M3 模型引擎)
+        EmbedModel --> |2. 加载检索| MilvusDB[(Milvus 混合向量数据库)]
+        MilvusDB --> |3. 返回事实知识点| ContextFilter[召回信息重组与过滤]
     end
     
     ContextFilter --> LLM[调用外部大语言模型推理]
