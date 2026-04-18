@@ -1,4 +1,4 @@
-# 求职面试助手 (XinghuoLLM)
+# 求职面试助手 
 
 ![Python Version](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![Framework](https://img.shields.io/badge/FastAPI-LangGraph-green.svg)
