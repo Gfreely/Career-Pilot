@@ -266,8 +266,172 @@ def analyse_query(query: str, llm_client: "UnifiedLLMClient") -> dict:
         return _build_heuristic_fallback(query)
 
 
+
 # ============================================================
-# 2. MultiRouteDispatcher — 并行分发 & 合并
+# 2. 改写校验层 (Rewrite Validation Layer)
+# ============================================================
+
+# 全局阈值配置（可调）
+JACCARD_DRIFT_THRESHOLD: float = 0.2   # 低于此值视为语义漂移
+LOW_CONFIDENCE_THRESHOLD: float = 0.5  # 低于此值触发 fix
+
+# 常见知名企业关键词，用于 P3 实体幻觉检测（覆盖最易被幻觉引入的词）
+_KNOWN_COMPANIES = {
+    "字节跳动", "腾讯", "阿里巴巴", "阿里", "华为", "小米", "百度", "网易",
+    "京东", "美团", "滴滴", "快手", "拼多多", "vivo", "OPPO", "联想",
+    "中兴", "大疆", "比亚迪", "台积电", "英特尔", "高通", "三星", "英伟达",
+    "IBM", "微软", "谷歌", "亚马逊", "苹果", "Meta",
+}
+
+
+def _compute_keyword_overlap(text_a: str, text_b: str) -> float:
+    """
+    计算两段文字的关键词 Jaccard 重叠系数。
+
+    采用字符级二元组（bigrams）而非分词，避免引入额外依赖。
+    返回 0.0（完全不重叠）到 1.0（完全相同）。
+    """
+    def _bigrams(text: str):
+        cleaned = re.sub(r"\s+", "", text.lower())
+        return set(cleaned[i:i+2] for i in range(len(cleaned) - 1))
+
+    set_a = _bigrams(text_a)
+    set_b = _bigrams(text_b)
+    if not set_a or not set_b:
+        return 0.0
+    intersection = len(set_a & set_b)
+    union = len(set_a | set_b)
+    return intersection / union if union > 0 else 0.0
+
+
+def _fix_rewrite(
+    query: str,
+    bad_rewrite: str,
+    issue_description: str,
+    llm_client: "UnifiedLLMClient",
+) -> str:
+    """
+    调用小模型对有问题的改写词进行一次修复。
+
+    失败时返回空字符串（由调用方决定 fallback 策略）。
+    """
+    try:
+        prompt = template.REWRITE_FIX_TEMPLATE.format(
+            query=query,
+            bad_rewrite=bad_rewrite,
+            issue_description=issue_description,
+        )
+        fixed = llm_client.call_small_model(system_prompt=prompt).strip()
+        # 基本合法性检查：非空且长度合理
+        if fixed and 2 <= len(fixed) <= 200:
+            return fixed
+    except Exception as e:
+        print(f"[_fix_rewrite] 修复调用异常: {e}")
+    return ""
+
+
+def validate_rewritten_query(
+    original_query: str,
+    rewritten_query: str,
+    entities: dict,
+    confidence: float,
+    llm_client: "UnifiedLLMClient",
+) -> dict:
+    """
+    对 analyse_query() 输出的 rewritten_query 执行分层校验（P0-P5）。
+
+    校验规则（按优先级，任一触发即处理）：
+      P0 — 空值检测：rewritten_query 为空/空白  → fallback
+      P1 — 极端长度：< 4 字符 或 > 150 字符     → fallback
+      P2 — 低置信度：confidence < LOW_CONFIDENCE_THRESHOLD → fix
+      P3 — 实体幻觉：改写词中出现 entities 未登记的知名公司 → fix
+      P4 — 语义漂移：Jaccard 系数 < JACCARD_DRIFT_THRESHOLD → fix
+      P5 — 全部通过                              → pass
+
+    fix 失败时自动降级为 fallback。
+
+    Returns
+    -------
+    dict
+        {
+            "valid":          bool,   # True = pass/fix 成功; False = fallback
+            "final_query":    str,    # 最终使用的查询词
+            "action":         str,    # "pass" / "fix" / "fallback"
+            "validation_log": str,    # 供调试/展示用的记录
+        }
+    """
+    rq = (rewritten_query or "").strip()
+
+    # ── P0: 空值检测 ──
+    if not rq:
+        log = "P0-空值: rewritten_query 为空，回退至原始 query"
+        print(f"[validate_rewritten_query] {log}")
+        return {"valid": False, "final_query": original_query, "action": "fallback", "validation_log": log}
+
+    # ── P1: 极端长度 ──
+    if len(rq) < 4 or len(rq) > 150:
+        log = f"P1-长度异常: len={len(rq)}，回退至原始 query"
+        print(f"[validate_rewritten_query] {log}")
+        return {"valid": False, "final_query": original_query, "action": "fallback", "validation_log": log}
+
+    # ── P2: 低置信度 ──
+    if confidence < LOW_CONFIDENCE_THRESHOLD:
+        issue = f"置信度过低 ({confidence:.2f} < {LOW_CONFIDENCE_THRESHOLD})"
+        fixed = _fix_rewrite(original_query, rq, issue, llm_client)
+        if fixed:
+            log = f"P2-低置信度: {issue} → 已修复为「{fixed}」"
+            print(f"[validate_rewritten_query] {log}")
+            return {"valid": True, "final_query": fixed, "action": "fix", "validation_log": log}
+        else:
+            log = f"P2-低置信度: {issue} → 修复失败，回退至原始 query"
+            print(f"[validate_rewritten_query] {log}")
+            return {"valid": False, "final_query": original_query, "action": "fallback", "validation_log": log}
+
+    # ── P3: 实体幻觉检测 ──
+    # 取 entities 中已登记的公司名（可能为 None）
+    registered_companies: set = set()
+    entities_company = entities.get("company")
+    if entities_company:
+        registered_companies.add(str(entities_company).strip())
+    # 检查改写词中是否出现未登记的知名公司
+    hallucinated = [
+        c for c in _KNOWN_COMPANIES
+        if c in rq and c not in registered_companies and c not in original_query
+    ]
+    if hallucinated:
+        issue = f"改写词引入了未授权实体: {hallucinated}"
+        fixed = _fix_rewrite(original_query, rq, issue, llm_client)
+        if fixed:
+            log = f"P3-实体幻觉: {issue} → 已修复为「{fixed}」"
+            print(f"[validate_rewritten_query] {log}")
+            return {"valid": True, "final_query": fixed, "action": "fix", "validation_log": log}
+        else:
+            log = f"P3-实体幻觉: {issue} → 修复失败，回退至原始 query"
+            print(f"[validate_rewritten_query] {log}")
+            return {"valid": False, "final_query": original_query, "action": "fallback", "validation_log": log}
+
+    # ── P4: 语义漂移检测（Jaccard） ──
+    jaccard = _compute_keyword_overlap(original_query, rq)
+    if jaccard < JACCARD_DRIFT_THRESHOLD:
+        issue = f"语义漂移过大 (Jaccard={jaccard:.3f} < {JACCARD_DRIFT_THRESHOLD})"
+        fixed = _fix_rewrite(original_query, rq, issue, llm_client)
+        if fixed:
+            log = f"P4-语义漂移: {issue} → 已修复为「{fixed}」"
+            print(f"[validate_rewritten_query] {log}")
+            return {"valid": True, "final_query": fixed, "action": "fix", "validation_log": log}
+        else:
+            log = f"P4-语义漂移: {issue} → 修复失败，回退至原始 query"
+            print(f"[validate_rewritten_query] {log}")
+            return {"valid": False, "final_query": original_query, "action": "fallback", "validation_log": log}
+
+    # ── P5: 全部通过 ──
+    log = f"P5-校验通过: 使用改写词「{rq}」(confidence={confidence:.2f}, Jaccard={jaccard:.3f})"
+    print(f"[validate_rewritten_query] {log}")
+    return {"valid": True, "final_query": rq, "action": "pass", "validation_log": log}
+
+
+# ============================================================
+# 3. MultiRouteDispatcher — 并行分发 & 合并
 # ============================================================
 
 class MultiRouteDispatcher:
@@ -316,9 +480,12 @@ class MultiRouteDispatcher:
         intents         = analysis.get("intents", ["RAG"])
         rewritten_query = analysis.get("rewritten_query", "")
         entities        = analysis.get("entities", {})
+        confidence      = analysis.get("confidence", 0.5)
+        original_query  = analysis.get("original_query", rewritten_query)
 
         route_results:    Dict[str, dict] = {}
         rag_final_state:  dict            = {}
+        rag_validation:   dict            = {}   # 校验层结果（展示用）
 
         # ── DIRECT 分支：跳过所有检索 ──
         if "DIRECT" in intents:
@@ -336,12 +503,29 @@ class MultiRouteDispatcher:
 
             for intent in intents:
                 if intent == "RAG":
+                    # ── 改写校验层 (Rewrite Validation Layer) ──
+                    # 仅在 RAG 路由激活时执行校验，确保进入向量检索的 query 可靠
+                    raw_search_query = (
+                        rewritten_query
+                        or (" ".join(entities.get("keywords", [])) if entities.get("keywords") else "")
+                        or original_query
+                    )
+                    llm_client = _get_llm_client()
+                    rag_validation = validate_rewritten_query(
+                        original_query  = original_query or raw_search_query,
+                        rewritten_query = raw_search_query,
+                        entities        = entities,
+                        confidence      = confidence,
+                        llm_client      = llm_client,
+                    )
+                    final_search_query = rag_validation["final_query"]
                     futures["RAG"] = executor.submit(
                         self._run_rag,
-                        rewritten_query or entities.get("keywords", []) and " ".join(entities["keywords"]) or "",
+                        final_search_query,
                         rag_graph,
                         conversation_manager,
                         emb_model,
+                        rag_validation["validation_log"],
                     )
                 elif intent == "MCP_JOB":
                     futures["MCP_JOB"] = executor.submit(
@@ -398,7 +582,7 @@ class MultiRouteDispatcher:
         merged_context = "\n\n".join(merged_parts)
 
         # ── 生成 display_info ──
-        display_info = self._build_display_info(intents, route_results, rag_final_state)
+        display_info = self._build_display_info(intents, route_results, rag_final_state, rag_validation)
 
         return {
             "merged_context":  merged_context,
@@ -418,9 +602,17 @@ class MultiRouteDispatcher:
         rag_graph,
         conversation_manager,
         emb_model,
+        validation_log: str = "",
     ) -> dict:
         """
         执行 LangGraph RAG 图，返回结构化结果。
+
+        Parameters
+        ----------
+        search_query : str
+            经校验层确认后的最终检索查询词。
+        validation_log : str
+            改写校验层产生的日志，写入 AgentState 供展示。
 
         Returns
         -------
@@ -450,6 +642,7 @@ class MultiRouteDispatcher:
             "profile_vec":      profile_vec,
             "profile_filter":   profile_filter,
             "retrieval_status": "",
+            "validation_log":   validation_log,
         }
 
         final_state = rag_graph.invoke(initial_state)
@@ -474,6 +667,7 @@ class MultiRouteDispatcher:
         intents: List[str],
         route_results: dict,
         rag_final_state: dict,
+        rag_validation: dict | None = None,
     ) -> str:
         """拼装展示在 thinking_box 中的状态文字。"""
         label_map = {
@@ -485,7 +679,15 @@ class MultiRouteDispatcher:
         route_labels = " + ".join(label_map.get(i, i) for i in intents)
         display = f"**判定意图：** {route_labels}"
 
-        # RAG 反思信息
+        # ── 改写校验状态 ──
+        if rag_validation:
+            action = rag_validation.get("action", "")
+            action_icon = {"pass": "✅", "fix": "🔧", "fallback": "⚠️"}.get(action, "")
+            action_label = {"pass": "改写通过", "fix": "改写已修复", "fallback": "改写回退至原始问题"}.get(action, "")
+            if action_label:
+                display += f"\n*({action_icon} 查询{action_label})*"
+
+        # ── RAG 反思信息 ──
         if rag_final_state:
             reflection_log = rag_final_state.get("reflection_log", [])
             steps = rag_final_state.get("steps_count", 0)

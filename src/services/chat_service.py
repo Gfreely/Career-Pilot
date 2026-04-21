@@ -205,8 +205,10 @@ class ChatService:
         needs_rag_resources = self._needs_rag_resources(intents)
 
         try:
+            # 将原始 message 注入 analysis，供 validate_rewritten_query 对比使用
+            analysis_with_original = {**analysis, "original_query": message}
             dispatch_result = self.get_dispatcher().dispatch(
-                analysis=analysis,
+                analysis=analysis_with_original,
                 rag_graph=self.get_rag_graph() if needs_rag_resources else None,
                 conversation_manager=conversation_manager,
                 emb_model=self.get_emb_model() if needs_rag_resources else None,

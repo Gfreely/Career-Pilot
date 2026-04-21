@@ -29,7 +29,7 @@ import src.core.template as template
 # ============================================================
 MAX_REFLECTION_STEPS = 2          # 最大反思轮数（防环死）
 FAITHFUL_SCORE_THRESHOLD = 0.8    # 忠实度阈值
-INTERNAL_GENERATE_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # 图内部验证用模型（快速便宜）
+INTERNAL_GENERATE_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # 图内部验证用模型
 
 # ============================================================
 # 模块级单例
@@ -61,6 +61,7 @@ class AgentState(TypedDict):
     profile_vec: Optional[List[float]]
     profile_filter: Optional[dict]
     retrieval_status: str                   # 检索状态信息
+    validation_log: str                     # 阶段一改写校验日志（pass/fix/fallback）
 
 
 # ============================================================
